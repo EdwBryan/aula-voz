@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Panel de control · Aula que Escucha</title>
+  <link rel="stylesheet" href="/static/css/estilo.css">
+</head>
+<body class="ancho">
+  <main>
+    <div class="cabecera-panel">
+      <h1>Panel de control</h1>
+      <span id="conexion-panel" class="estado mal">Conectando…</span>
+    </div>
+    <p id="error-general" class="error oculto"></p>
+
+    <!-- Crear sesión -->
+    <section id="crear" class="tarjeta oculto">
+      <h2>Nueva sesión</h2>
+      <div class="dos-columnas">
+        <div>
+          <label for="curso">Curso</label>
+          <input id="curso" type="text" maxlength="60" placeholder="Redes de computadoras">
+        </div>
+        <div>
+          <label for="tema">Tema</label>
+          <input id="tema" type="text" maxlength="120" placeholder="Capa de transporte">
+        </div>
+      </div>
+      <button id="btn-crear">Crear sesión</button>
+    </section>
+
+    <!-- Sesión activa -->
+    <section id="sesion" class="tarjeta oculto">
+      <div class="cabecera-panel">
+        <div>
+          <h2 id="ses-titulo"></h2>
+          <p class="suave" id="ses-carpeta"></p>
+        </div>
+        <span id="ses-estado" class="insignia"></span>
+      </div>
+      <div class="tiempo grande" id="ses-tiempo">00:00:00</div>
+      <p class="suave centrado" id="ses-total"></p>
+      <div id="controles">
+      <div class="botones-fila">
+        <button id="btn-iniciar">▶ Iniciar grabación</button>
+        <button id="btn-pausar" class="secundario">⏸ Pausar</button>
+      </div>
+      <div class="botones-fila">
+        <input id="marca-etiqueta" type="text" maxlength="60" placeholder="Etiqueta de la marca (opcional)">
+        <button id="btn-marca" class="secundario">✱ Marca</button>
+      </div>
+      <button id="btn-terminar" class="grabar">■ Terminar clase</button>
+      </div>
+    </section>
+
+    <!-- Resultado al terminar -->
+    <section id="resultado" class="tarjeta oculto">
+      <h2>Comprobación de los archivos</h2>
+      <table>
+        <thead><tr><th>Dispositivo</th><th>Formato</th><th>Duración real</th><th>Esperada</th><th>Diferencia</th><th>Pausas</th><th>Huecos</th><th title="Audio en cero exacto: si es alto, el celular aplicó un filtro de ruido">Ceros</th></tr></thead>
+        <tbody id="resultado-filas"></tbody>
+      </table>
+    </section>
+
+    <h2>Celulares</h2>
+    <div id="dispositivos" class="rejilla"></div>
+    <p id="sin-dispositivos" class="suave">Ningún celular conectado. Ábreles <strong id="url-clase"></strong></p>
+
+    <section id="marcas" class="tarjeta oculto">
+      <h2>Marcas</h2>
+      <ol id="marcas-lista"></ol>
+    </section>
+  </main>
+  <script type="module" src="/static/js/control.js"></script>
+</body>
+</html>

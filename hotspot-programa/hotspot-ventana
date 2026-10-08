@@ -1,0 +1,264 @@
+#!/usr/bin/env python3
+"""Ventanita para el hotspot: interruptor, clave, QR y celulares conectados.
+
+Toda la lógica vive en el script 'hotspot' de esta misma carpeta; esta ventana solo
+lo llama ('hotspot info' cada 3 s, 'hotspot -y on|off' con el interruptor).
+Al cerrar la ventana con el hotspot prendido, se apaga.
+"""
+
+import os
+import re
+import subprocess
+import sys
+
+import gi
+
+gi.require_version("Gtk", "4.0")
+gi.require_version("Adw", "1")
+from gi.repository import Adw, Gdk, Gio, GLib, Gtk  # noqa: E402
+
+APP_ID = "com.percepcion.Hotspot"
+HOTSPOT = os.path.join(os.path.dirname(os.path.realpath(__file__)), "hotspot")
+REFRESH_SECONDS = 3
+
+
+def wifi_qr_texture(ssid, password):
+    """Textura con el QR estándar 'WIFI:' que las cámaras de los celulares reconocen."""
+    esc = lambda s: re.sub(r'([\\;,:"])', r"\\\1", s)  # noqa: E731
+    payload = f"WIFI:T:WPA;S:{esc(ssid)};P:{esc(password)};;"
+    try:
+        png = subprocess.run(
+            ["qrencode", "-t", "PNG", "-s", "8", "-m", "2", "-o", "-", payload],
+            capture_output=True, check=True,
+        ).stdout
+    except (OSError, subprocess.CalledProcessError):
+        return None
+    return Gdk.Texture.new_from_bytes(GLib.Bytes.new(png))
+
+
+def parse_info(text):
+    info = {"devices": []}
+    for line in text.splitlines():
+        key, _, value = line.partition("=")
+        if key == "device":
+            mac, _, ip = value.partition(" ")
+            info["devices"].append((mac, ip if ip != "-" else None))
+        elif key:
+            info[key] = value
+    return info
+
+
+class HotspotWindow(Adw.ApplicationWindow):
+    def __init__(self, app):
+        super().__init__(application=app, title="Hotspot")
+        # Tamaño fijo: Hyprland pone flotantes las ventanas que no se pueden redimensionar.
+        self.set_default_size(380, -1)
+        self.set_resizable(False)
+
+        self.busy = False        # hay un 'hotspot on/off' en curso
+        self.closing = False
+        self.info = {}
+        self.qr_key = None
+        self.device_rows = []
+
+        self.toasts = Adw.ToastOverlay()
+        view = Adw.ToolbarView()
+        view.add_top_bar(Adw.HeaderBar())
+        view.set_content(self.toasts)
+        self.set_content(view)
+
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=18,
+                      margin_top=12, margin_bottom=18, margin_start=18, margin_end=18)
+        self.toasts.set_child(box)
+
+        # Interruptor
+        main = Adw.PreferencesGroup()
+        self.switch_row = Adw.SwitchRow(title="Hotspot")
+        self.switch_row.add_css_class("property")
+        self.spinner = Adw.Spinner(visible=False)
+        self.switch_row.add_suffix(self.spinner)
+        self.switch_handler = self.switch_row.connect("notify::active", self.on_switch)
+        main.add(self.switch_row)
+        box.append(main)
+
+        # Datos de la red
+        net = Adw.PreferencesGroup(title="Red")
+        self.ssid_row = self._copy_row(net, "Nombre (SSID)")
+        self.pass_row = self._copy_row(net, "Clave")
+        self.url_row = self._copy_row(net, "Abrir en el celular")
+        box.append(net)
+
+        # QR (solo con el hotspot prendido: antes la red no existe)
+        self.qr = Gtk.Picture(can_shrink=True, content_fit=Gtk.ContentFit.CONTAIN,
+                              height_request=220, visible=False)
+        self.qr.set_tooltip_text("Escanéalo con la cámara del celular para unirte a la red")
+        box.append(self.qr)
+
+        # Aviso de firewall
+        self.fw_banner = Adw.Banner(title="El firewall no está abierto: los celulares no recibirán IP. "
+                                          "Apaga y vuelve a prender.")
+        box.append(self.fw_banner)
+
+        # Celulares
+        self.dev_group = Adw.PreferencesGroup(title="Celulares conectados")
+        self.no_devices = Adw.ActionRow(title="Ninguno todavía")
+        self.no_devices.add_css_class("dim-label")
+        self.dev_group.add(self.no_devices)
+        box.append(self.dev_group)
+
+        hint = Gtk.Label(label="Al cerrar esta ventana se apaga el hotspot.", wrap=True)
+        hint.add_css_class("dim-label")
+        hint.add_css_class("caption")
+        box.append(hint)
+
+        self.connect("close-request", self.on_close)
+        self.refresh()
+        GLib.timeout_add_seconds(REFRESH_SECONDS, self._tick)
+
+    def _copy_row(self, group, title):
+        row = Adw.ActionRow(title=title, subtitle="—")
+        row.add_css_class("property")
+        row.set_subtitle_selectable(True)
+        btn = Gtk.Button(icon_name="edit-copy-symbolic", valign=Gtk.Align.CENTER,
+                         tooltip_text="Copiar")
+        btn.add_css_class("flat")
+        btn.connect("clicked", lambda _b: self._copy(row.get_subtitle()))
+        row.add_suffix(btn)
+        group.add(row)
+        return row
+
+    def _copy(self, text):
+        self.get_clipboard().set(text)
+        self.toasts.add_toast(Adw.Toast(title="Copiado", timeout=1))
+
+    # ── llamadas al script ────────────────────────────────────────────────────
+    def run_hotspot(self, args, callback):
+        # Sin terminal en stdin: así el script pide permisos con pkexec (diálogo del shell).
+        proc = Gio.Subprocess.new(
+            [HOTSPOT, *args],
+            Gio.SubprocessFlags.STDIN_PIPE | Gio.SubprocessFlags.STDOUT_PIPE
+            | Gio.SubprocessFlags.STDERR_MERGE,
+        )
+
+        def done(p, res):
+            try:
+                _ok, out, _err = p.communicate_utf8_finish(res)
+            except GLib.Error as e:
+                out = str(e)
+            callback(p.get_successful(), out or "")
+
+        proc.communicate_utf8_async(None, None, done)
+
+    def _tick(self):
+        if not self.busy and not self.closing:
+            self.refresh()
+        return GLib.SOURCE_CONTINUE
+
+    def refresh(self):
+        self.run_hotspot(["info"], self._on_info)
+
+    def _on_info(self, ok, out):
+        if not ok:
+            self.switch_row.set_subtitle("No pude leer el estado")
+            return
+        self.info = info = parse_info(out)
+        active = info.get("active") == "1"
+
+        self.switch_row.handler_block(self.switch_handler)
+        self.switch_row.set_active(active)
+        self.switch_row.handler_unblock(self.switch_handler)
+        if not self.busy:
+            self.switch_row.set_subtitle(
+                f"Prendido · laptop en {info.get('ip')}" if active else "Apagado")
+
+        port = info.get("port", "8000")
+        self.ssid_row.set_subtitle(info.get("ssid", "—"))
+        self.pass_row.set_subtitle(info.get("password", "—"))
+        self.url_row.set_subtitle(f"http://{info.get('ip')}:{port}")
+
+        key = (info.get("ssid"), info.get("password"))
+        if active and key != self.qr_key:
+            self.qr.set_paintable(wifi_qr_texture(*key))
+            self.qr_key = key
+        self.qr.set_visible(active)
+
+        self.fw_banner.set_revealed(active and info.get("ufw") == "1" and info.get("ufw_open") != "1")
+        self._show_devices(info["devices"] if active else [])
+
+    def _show_devices(self, devices):
+        for row in self.device_rows:
+            self.dev_group.remove(row)
+        self.device_rows = []
+        self.no_devices.set_visible(not devices)
+        for mac, ip in devices:
+            row = Adw.ActionRow(title=ip or "(sin IP aún)", subtitle=mac)
+            row.add_prefix(Gtk.Image(icon_name="phone-symbolic"))
+            self.dev_group.add(row)
+            self.device_rows.append(row)
+        self.dev_group.set_title(f"Celulares conectados ({len(devices)})" if devices
+                                 else "Celulares conectados")
+
+    # ── interruptor y cierre ─────────────────────────────────────────────────
+    def _set_busy(self, busy, text=""):
+        self.busy = busy
+        self.switch_row.set_sensitive(not busy)
+        self.spinner.set_visible(busy)
+        if busy:
+            self.switch_row.set_subtitle(text)
+
+    def on_switch(self, row, _pspec):
+        if self.busy:
+            return
+        if row.get_active():
+            self._set_busy(True, "Prendiendo…")
+            self.run_hotspot(["-y", "on"], lambda ok, out: self._after(ok, out, "prender"))
+        else:
+            self._set_busy(True, "Apagando…")
+            self.run_hotspot(["-y", "off"], lambda ok, out: self._after(ok, out, "apagar"))
+
+    def _after(self, ok, out, verb):
+        self._set_busy(False)
+        if not ok:
+            self._error(f"No se pudo {verb} el hotspot", out)
+        self.refresh()
+
+    def _error(self, heading, out):
+        lines = [l for l in out.splitlines() if l.strip()]
+        body = "\n".join(lines[-8:]) or "Sin detalles."
+        dialog = Adw.AlertDialog(heading=heading, body=body)
+        dialog.add_response("ok", "Entendido")
+        dialog.present(self)
+
+    def on_close(self, _win):
+        if self.closing or self.info.get("active") != "1":
+            return False  # cerrar normal
+        if self.busy:
+            return True   # esperar a que termine lo que está en curso
+        self.closing = True
+        self._set_busy(True, "Apagando antes de cerrar…")
+
+        def done(ok, out):
+            if not ok:
+                self.closing = False
+                self._set_busy(False)
+                self._error("No se pudo apagar el hotspot", out)
+                self.refresh()
+                return
+            self.get_application().quit()
+
+        self.run_hotspot(["-y", "off"], done)
+        return True
+
+
+class HotspotApp(Adw.Application):
+    def __init__(self):
+        super().__init__(application_id=APP_ID, flags=Gio.ApplicationFlags.DEFAULT_FLAGS)
+
+    def do_activate(self):
+        win = self.get_active_window() or HotspotWindow(self)
+        win.present()
+
+
+if __name__ == "__main__":
+    # Archivos abiertos con doble clic (Prender hotspot.hotspot) llegan como argumento: se ignoran.
+    sys.exit(HotspotApp().run(sys.argv[:1]))

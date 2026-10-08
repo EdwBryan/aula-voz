@@ -1,0 +1,442 @@
+#!/usr/bin/env bash
+# hotspot — prende/apaga un punto de acceso WiFi local (sin internet) con NetworkManager.
+# Uso: hotspot [-y] on|off|status|run
+#   run: prende, muestra clave + QR + celulares conectados, y apaga todo con Ctrl+C.
+# Configuración: ~/.config/hotspot.conf (se crea sola la primera vez).
+
+set -euo pipefail
+
+CONF="${XDG_CONFIG_HOME:-$HOME/.config}/hotspot.conf"
+STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/hotspot"
+PREV_FILE="$STATE_DIR/wifi-anterior"   # UUID de la WiFi que había antes de prender
+UFW_FILE="$STATE_DIR/ufw-reglas"       # reglas de ufw que abrimos nosotros
+CON_NAME="hotspot"                     # nombre de la conexión en NetworkManager
+GATEWAY="10.42.0.1"
+SUBNET="10.42.0.0/24"
+ASSUME_YES=0
+KEEPALIVE=""
+
+# ── utilidades ────────────────────────────────────────────────────────────────
+if [[ -t 1 ]]; then B=$'\e[1m'; R=$'\e[31m'; G=$'\e[32m'; Y=$'\e[33m'; N=$'\e[0m'; else B='' R='' G='' Y='' N=''; fi
+info() { printf '%s\n' "$*"; }
+ok()   { printf '%s✔%s %s\n' "$G" "$N" "$*"; }
+warn() { printf '%s!%s %s\n' "$Y" "$N" "$*" >&2; }
+die()  { printf '%s✘ %s%s\n' "$R" "$*" "$N" >&2; exit 1; }
+
+need() { command -v "$1" >/dev/null || die "Falta '$1'. Instálalo con: sudo pacman -S ${2:-$1}"; }
+
+confirm() {  # confirm "explicación"  → 0 si el usuario acepta
+    (( ASSUME_YES )) && return 0
+    [[ -t 0 ]] || { warn "Sin terminal para confirmar; usa -y para aceptar sin preguntar."; return 1; }
+    printf '%s\n' "$1"
+    read -rp "¿Continuar? [S/n] " r
+    [[ -z "$r" || "$r" =~ ^[sSyY] ]]
+}
+
+# ── configuración ─────────────────────────────────────────────────────────────
+load_conf() {
+    if [[ ! -f "$CONF" ]]; then
+        local pass
+        pass=$(LC_ALL=C tr -dc 'abcdefghjkmnpqrstuvwxyz23456789' </dev/urandom | head -c 10 || true)
+        mkdir -p "$(dirname "$CONF")"
+        (umask 077; cat >"$CONF" <<EOF
+# Configuración de 'hotspot'. Tras cambiar algo: hotspot off && hotspot on
+SSID="AulaQueEscucha"
+PASSWORD="$pass"          # WPA2: mínimo 8 caracteres
+PORT=8000                 # puerto TCP que se abre en el firewall solo para el hotspot
+CHANNEL=6                 # 2.4 GHz (1-11). Esta tarjeta no permite AP en 5 GHz.
+IFACE=""                  # vacío = detectar la interfaz WiFi automáticamente
+EOF
+        )
+        ok "Creé $CONF con una clave aleatoria."
+    fi
+    SSID="" PASSWORD="" PORT=8000 CHANNEL=6 IFACE=""
+    # shellcheck source=/dev/null
+    source "$CONF"
+    [[ -n "$SSID" ]] || die "SSID vacío en $CONF"
+    (( ${#PASSWORD} >= 8 && ${#PASSWORD} <= 63 )) || die "La clave en $CONF debe tener entre 8 y 63 caracteres."
+    [[ "$PORT" =~ ^[0-9]+$ ]] || die "PORT inválido en $CONF"
+}
+
+detect_iface() {
+    if [[ -z "$IFACE" ]]; then
+        IFACE=$(nmcli -t -f DEVICE,TYPE device | awk -F: '$2=="wifi"{print $1; exit}')
+    fi
+    [[ -n "$IFACE" ]] || die "No encontré ninguna interfaz WiFi que maneje NetworkManager."
+    nmcli -t -f DEVICE device | grep -qx "$IFACE" || die "La interfaz '$IFACE' (de $CONF) no existe."
+}
+
+check_ap_support() {
+    local phy
+    phy=$(iw dev "$IFACE" info 2>/dev/null | awk '/wiphy/{print "phy"$2}')
+    [[ -n "$phy" ]] || die "No pude leer la tarjeta de '$IFACE' con iw."
+    iw phy "$phy" info | sed -n '/Supported interface modes/,/^\t[^\t]/p' | grep -q '\* AP$' \
+        || die "La tarjeta de '$IFACE' no soporta modo AP: no puede crear un hotspot. Opciones: un adaptador USB con modo AP."
+}
+
+check_radio() {
+    [[ "$(nmcli radio wifi)" == enabled ]] \
+        || die "El WiFi está apagado (nmcli radio wifi = disabled). Préndelo con: nmcli radio wifi on"
+    if command -v rfkill >/dev/null && rfkill list wifi 2>/dev/null | grep -q 'blocked: yes'; then
+        die "El WiFi está bloqueado por rfkill (tecla de avión o bloqueo físico). Revisa: rfkill list"
+    fi
+    local st
+    st=$(nmcli -t -f DEVICE,STATE device | awk -F: -v d="$IFACE" '$1==d{print $2}')
+    [[ "$st" == unmanaged ]] && die "NetworkManager no gestiona '$IFACE' (unmanaged). Otro programa la está usando."
+    [[ "$st" == unavailable ]] && die "'$IFACE' no está disponible (¿WiFi apagado o driver caído?)."
+    return 0
+}
+
+hotspot_active() {
+    nmcli -t -f NAME connection show --active | grep -qx "$CON_NAME"
+}
+
+# QR que los celulares entienden para unirse a la red (formato WIFI: de ZXing).
+print_qr() {
+    if command -v qrencode >/dev/null; then
+        local esc_ssid esc_pass
+        esc_ssid=$(sed 's/[\\;,:"]/\\&/g' <<<"$SSID")
+        esc_pass=$(sed 's/[\\;,:"]/\\&/g' <<<"$PASSWORD")
+        qrencode -t ANSIUTF8 -m 2 "WIFI:T:WPA;S:${esc_ssid};P:${esc_pass};;"
+    else
+        nmcli device wifi show-password ifname "$IFACE" 2>/dev/null | sed -n '/█\|▀\|▄/p' \
+            || warn "Para ver el QR instala qrencode: sudo pacman -S qrencode"
+    fi
+}
+
+# Una línea por celular conectado: MAC e IP.
+list_devices() {
+    local macs mac dip
+    macs=$(iw dev "$IFACE" station dump 2>/dev/null | awk '/^Station/{print $2}')
+    if [[ -z "$macs" ]]; then
+        info "  Dispositivos:  ninguno conectado"
+        return 0
+    fi
+    info "  Dispositivos conectados ($(wc -l <<<"$macs")):"
+    while IFS= read -r mac; do
+        dip=$(ip -4 neigh show dev "$IFACE" | awk -v m="$mac" 'tolower($3)==tolower(m){print $1; exit}')
+        printf '    %s  %s\n' "$mac" "${dip:-(sin IP aún)}"
+    done <<<"$macs"
+}
+
+# ── firewall ──────────────────────────────────────────────────────────────────
+ufw_enabled() {
+    command -v ufw >/dev/null && grep -qs '^ENABLED=yes' /etc/ufw/ufw.conf
+}
+
+other_firewall_warning() {
+    if systemctl is-active -q firewalld 2>/dev/null; then
+        warn "firewalld está activo y este script no lo maneja: abre a mano el puerto $PORT, 53 y 67 en '$IFACE'."
+    fi
+}
+
+# Reglas que hacen falta: 8000/tcp para tu servidor; 67/udp (DHCP) y 53 (DNS) para que
+# los celulares reciban IP de la laptop. Todas limitadas a la interfaz del hotspot.
+ufw_rules() {
+    printf '%s\n' \
+        "allow in on $IFACE from $SUBNET to any port $PORT proto tcp comment hotspot" \
+        "allow in on $IFACE to any port 67 proto udp comment hotspot-dhcp" \
+        "allow in on $IFACE from $SUBNET to any port 53 comment hotspot-dns"
+}
+
+PRIV_NAME="sudo"   # cambia a pkexec sin terminal (ventana): el shell muestra el diálogo de clave
+
+# Ejecuta varias líneas de shell como root con UNA sola petición de contraseña.
+as_root() {
+    if [[ -t 0 ]]; then
+        sudo sh -c "$1"
+    elif sudo -n true 2>/dev/null; then
+        sudo -n sh -c "$1"
+    else
+        pkexec /bin/sh -c "$1"
+    fi
+}
+
+# Mini-script de root que abre/cierra solo estas reglas, permitido sin clave en
+# /etc/sudoers.d/hotspot. Si no está instalado, se usa sudo/pkexec con contraseña.
+HELPER="/usr/local/bin/hotspot-firewall"
+helper_ok() { [[ -x "$HELPER" ]] && sudo -n -l "$HELPER" >/dev/null 2>&1; }
+
+firewall_open() {
+    ufw_enabled || { other_firewall_warning; return 0; }
+    mkdir -p "$STATE_DIR"
+    if helper_ok; then
+        echo "helper $IFACE $PORT" >"$UFW_FILE"
+        sudo -n "$HELPER" open "$IFACE" "$PORT" \
+            || die "No pude abrir el firewall con $HELPER. Los celulares no recibirán IP."
+        ok "Firewall: puertos $PORT/tcp, 67/udp y 53 abiertos solo en $IFACE."
+        return 0
+    fi
+    local rules
+    rules=$(ufw_rules)
+    [[ -t 0 ]] || PRIV_NAME="pkexec"
+    if ! confirm "${B}ufw está activo.${N} Para abrir el hotspot voy a ejecutar con $PRIV_NAME:
+$(sed 's/^/  ufw /' <<<"$rules")
+(se quitan solas al apagar el hotspot)"; then
+        warn "No abrí el firewall: los celulares no recibirán IP ni llegarán al puerto $PORT."
+        return 0
+    fi
+    # Se anotan antes de abrirlas: si algo falla a medias, 'hotspot off' las limpia igual.
+    printf '%s\n' "$rules" >"$UFW_FILE"
+    as_root "set -e
+$(sed 's/^/ufw /; s/$/ >\/dev\/null/' <<<"$rules")" \
+        || die "No pude abrir el firewall (¿contraseña cancelada?). Los celulares no recibirán IP."
+    ok "Firewall: puertos $PORT/tcp, 67/udp y 53 abiertos solo en $IFACE."
+}
+
+firewall_close() {
+    [[ -s "$UFW_FILE" ]] || return 0
+    command -v ufw >/dev/null || { rm -f "$UFW_FILE"; return 0; }
+    local kind h_iface h_port
+    read -r kind h_iface h_port <"$UFW_FILE"
+    if [[ "$kind" == helper ]]; then
+        if sudo -n "$HELPER" close "$h_iface" "$h_port"; then
+            rm -f "$UFW_FILE"
+            ok "Firewall: reglas del hotspot quitadas."
+        else
+            warn "No pude quitar todas las reglas de ufw; reintenta con: hotspot off"
+        fi
+        return 0
+    fi
+    [[ -t 0 ]] || PRIV_NAME="pkexec"
+    if ! confirm "Voy a quitar con $PRIV_NAME las reglas de ufw que abrí al prender:
+$(sed 's/^/  ufw delete /' "$UFW_FILE")"; then
+        warn "Las reglas siguen abiertas. Quítalas luego con: hotspot off"
+        return 0
+    fi
+    # Borrar una regla que ya no existe no es error para ufw.
+    if as_root "$(sed 's/^/ufw delete /; s/$/ >\/dev\/null/' "$UFW_FILE")"; then
+        rm -f "$UFW_FILE"
+        ok "Firewall: reglas del hotspot quitadas."
+    else
+        warn "No pude quitar las reglas de ufw (¿contraseña cancelada?); reintenta con: hotspot off"
+    fi
+}
+
+# ── comandos ──────────────────────────────────────────────────────────────────
+ensure_connection() {
+    local -a props=(
+        connection.interface-name "$IFACE"
+        connection.autoconnect no
+        802-11-wireless.ssid "$SSID"
+        802-11-wireless.mode ap
+        802-11-wireless.band bg
+        802-11-wireless.channel "$CHANNEL"
+        wifi-sec.key-mgmt wpa-psk
+        wifi-sec.proto rsn
+        wifi-sec.pairwise ccmp
+        wifi-sec.group ccmp
+        wifi-sec.psk "$PASSWORD"
+        ipv4.method shared
+        ipv4.addresses "$GATEWAY/24"
+        ipv6.method disabled
+    )
+    if nmcli -t -f NAME connection show | grep -qx "$CON_NAME"; then
+        nmcli connection modify "$CON_NAME" "${props[@]}" \
+            || die "No pude actualizar la conexión '$CON_NAME' en NetworkManager."
+    else
+        nmcli connection add type wifi con-name "$CON_NAME" ifname "$IFACE" ssid "$SSID" >/dev/null \
+            || die "No pude crear la conexión '$CON_NAME' en NetworkManager."
+        nmcli connection modify "$CON_NAME" "${props[@]}" \
+            || die "No pude configurar la conexión '$CON_NAME' en NetworkManager."
+        ok "Creé la conexión '$CON_NAME' en NetworkManager (se reutiliza las próximas veces)."
+    fi
+}
+
+cmd_on() {
+    need nmcli networkmanager; need iw; need dnsmasq
+    load_conf; detect_iface; check_ap_support; check_radio
+
+    if hotspot_active; then
+        warn "El hotspot ya estaba prendido."
+    else
+        # Recordar la WiFi actual para reconectarla al apagar.
+        local prev
+        prev=$(nmcli -t -f UUID,TYPE,DEVICE connection show --active \
+               | awk -F: -v d="$IFACE" '$2=="802-11-wireless" && $3==d{print $1; exit}')
+        mkdir -p "$STATE_DIR"
+        if [[ -n "$prev" ]]; then
+            echo "$prev" >"$PREV_FILE"
+            warn "Tu WiFi actual ($(nmcli -g connection.id connection show "$prev")) se desconecta: la tarjeta tiene una sola radio."
+        else
+            rm -f "$PREV_FILE"
+        fi
+
+        ensure_connection
+        info "Levantando el hotspot en $IFACE…"
+        local err
+        if ! err=$(nmcli connection up "$CON_NAME" 2>&1); then
+            [[ -n "$prev" ]] && nmcli connection up "$prev" >/dev/null 2>&1 || true
+            die "NetworkManager no pudo levantar el hotspot:
+$err
+Pistas: prueba otro canal en $CONF (1, 6 u 11); revisa 'journalctl -u NetworkManager -n 50'."
+        fi
+    fi
+
+    firewall_open
+
+    echo
+    ok "${B}Hotspot prendido${N}"
+    info "  SSID:          $SSID"
+    info "  Clave:         $PASSWORD"
+    info "  IP de laptop:  $GATEWAY   (interfaz $IFACE)"
+    info "  Desde un cel:  http://$GATEWAY:$PORT"
+    info "  QR:            hotspot qr"
+}
+
+cmd_off() {
+    need nmcli networkmanager
+    load_conf; detect_iface
+
+    if hotspot_active; then
+        nmcli connection down "$CON_NAME" >/dev/null || die "No pude apagar la conexión '$CON_NAME'."
+        ok "Hotspot apagado."
+    else
+        info "El hotspot no estaba prendido."
+    fi
+
+    firewall_close
+
+    if [[ -s "$PREV_FILE" ]]; then
+        local prev name
+        prev=$(<"$PREV_FILE")
+        name=$(nmcli -g connection.id connection show "$prev" 2>/dev/null || echo "$prev")
+        if nmcli -t -f UUID connection show --active | grep -qx "$prev"; then
+            ok "Ya estás conectado a $name."
+        elif info "Reconectando a tu WiFi ($name)…"; nmcli connection up "$prev" >/dev/null 2>&1; then
+            ok "Conectado a $name."
+        else
+            warn "No pude reconectar a $name; NetworkManager lo intentará solo. Ver: nmcli device"
+        fi
+        rm -f "$PREV_FILE"
+    fi
+}
+
+cmd_status() {
+    need nmcli networkmanager; need iw
+    load_conf; detect_iface
+
+    if ! hotspot_active; then
+        info "Hotspot: ${B}apagado${N}"
+        [[ -s "$UFW_FILE" ]] && warn "Quedaron reglas de ufw abiertas; ciérralas con: hotspot off"
+        return 0
+    fi
+    local ip
+    ip=$(nmcli -g IP4.ADDRESS device show "$IFACE" | head -1)
+    info "Hotspot: ${G}${B}prendido${N}"
+    info "  SSID:          $SSID"
+    info "  IP de laptop:  ${ip%/*}   (interfaz $IFACE)"
+    if [[ -s "$UFW_FILE" ]]; then
+        info "  Firewall:      puerto $PORT abierto en $IFACE"
+    elif ufw_enabled; then
+        warn "ufw está activo pero no abrí puertos: los celulares no recibirán IP. Ejecuta: hotspot on"
+    fi
+    list_devices
+}
+
+# Para la ventana: líneas clave=valor, una 'device=' por celular conectado.
+cmd_info() {
+    load_conf; detect_iface
+    local active=0 mac dip
+    hotspot_active && active=1
+    printf 'active=%s\nssid=%s\npassword=%s\nip=%s\nport=%s\niface=%s\nufw_open=%s\nufw=%s\n' \
+        "$active" "$SSID" "$PASSWORD" "$GATEWAY" "$PORT" "$IFACE" "$([[ -s "$UFW_FILE" ]] && echo 1 || echo 0)" "$(ufw_enabled && echo 1 || echo 0)"
+    (( active )) || return 0
+    while IFS= read -r mac; do
+        [[ -n "$mac" ]] || continue
+        dip=$(ip -4 neigh show dev "$IFACE" | awk -v m="$mac" 'tolower($3)==tolower(m){print $1; exit}')
+        printf 'device=%s %s\n' "$mac" "${dip:--}"
+    done < <(iw dev "$IFACE" station dump 2>/dev/null | awk '/^Station/{print $2}')
+}
+
+cmd_qr() {
+    load_conf; detect_iface
+    info "Red: $SSID   Clave: $PASSWORD"
+    print_qr
+}
+
+# ── modo ventana: prende, muestra todo en vivo y apaga con Ctrl+C ──────────────
+run_cleanup() {
+    trap '' INT TERM HUP
+    set +e
+    # Ventana cerrada con la X: ya no hay terminal donde escribir ni pedir clave.
+    [[ "$1" == HUP ]] && exec </dev/null >/dev/null 2>&1
+    printf '\n'
+    info "Apagando…"
+    ASSUME_YES=1 cmd_off          # las reglas de ufw ya se explicaron al prender
+    [[ -n "$KEEPALIVE" ]] && kill "$KEEPALIVE" 2>/dev/null
+    if [[ "$1" != HUP ]]; then
+        info "Listo. Esta ventana se cierra en 3 s."
+        sleep 3
+    fi
+    exit 0
+}
+
+cmd_run() {
+    [[ -t 0 && -t 1 ]] || die "'hotspot run' necesita una terminal."
+    # Si algo falla, que la ventana no se cierre antes de poder leer el error.
+    trap 'rc=$?; (( rc )) && read -rp "Presiona Enter para cerrar…" _' EXIT
+    cmd_on
+    trap 'run_cleanup INT' INT
+    trap 'run_cleanup TERM' TERM
+    trap 'run_cleanup HUP' HUP
+
+    # Mantiene vivo el permiso de sudo para poder cerrar el firewall al salir sin
+    # volver a pedir la contraseña.
+    if [[ -s "$UFW_FILE" ]]; then
+        (while sleep 50; do sudo -n -v 2>/dev/null || exit; done) &
+        KEEPALIVE=$!
+    fi
+
+    local qr frame
+    qr=$(print_qr)
+    printf '\e[H\e[2J'
+    while true; do
+        if ! hotspot_active; then
+            warn "El hotspot se apagó desde fuera de esta ventana."
+            run_cleanup INT
+        fi
+        frame=$(
+            info " ${G}${B}● HOTSPOT PRENDIDO${N}"
+            info ""
+            info "  Red (SSID):    ${B}$SSID${N}"
+            info "  Clave:         ${B}$PASSWORD${N}"
+            info "  En el celular: ${B}http://$GATEWAY:$PORT${N}"
+            info ""
+            info "$qr"
+            info ""
+            list_devices
+            info ""
+            info " ${Y}Ctrl+C${N} apaga el hotspot y cierra esta ventana."
+        )
+        printf '\e[H%s\e[J' "${frame//$'\n'/$'\e[K\n'}"
+        sleep 3 &
+        wait $! || true
+    done
+}
+
+usage() {
+    cat <<EOF
+Uso: hotspot [-y] on|off|status|qr|run
+  on      crea o reutiliza el hotspot, lo prende y muestra SSID, clave e IP
+  off     lo apaga, cierra el firewall y vuelve a tu WiFi anterior
+  status  dice si está prendido, la IP y los dispositivos conectados
+  qr      muestra el QR para que los celulares se unan a la red
+  info    estado en formato clave=valor (lo usa la ventana)
+  run     prende y se queda mostrando clave, QR y celulares; Ctrl+C lo apaga todo
+  -y      no preguntar antes de los comandos con sudo (ufw)
+Configuración: $CONF
+EOF
+}
+
+[[ "${1:-}" == -y ]] && { ASSUME_YES=1; shift; }
+case "${1:-}" in
+    on)     cmd_on ;;
+    off)    cmd_off ;;
+    status) cmd_status ;;
+    qr)     cmd_qr ;;
+    info)   cmd_info ;;
+    run)    cmd_run ;;
+    -h|--help|help|"") usage ;;
+    *) usage >&2; exit 2 ;;
+esac

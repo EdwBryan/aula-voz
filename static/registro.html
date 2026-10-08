@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Registro de voz · Aula que Escucha</title>
+  <link rel="stylesheet" href="/static/css/estilo.css">
+</head>
+<body>
+  <main>
+    <h1>Registro de voz</h1>
+    <p id="error-general" class="error oculto"></p>
+
+    <!-- Paso 1: datos y consentimiento -->
+    <section id="paso-datos" class="tarjeta">
+      <label for="nombre">Nombre completo</label>
+      <input id="nombre" type="text" autocomplete="name" autocapitalize="words" maxlength="80">
+
+      <label for="codigo">Código de alumno</label>
+      <input id="codigo" type="text" inputmode="numeric" autocomplete="off" maxlength="20">
+
+      <label class="casilla">
+        <input id="consentimiento" type="checkbox">
+        <span id="texto-consentimiento">Cargando…</span>
+      </label>
+
+      <button id="continuar" disabled>Continuar</button>
+    </section>
+
+    <!-- Paso 2: grabar las tomas -->
+    <section id="paso-tomas" class="oculto">
+      <div class="tarjeta">
+        <p>Graba <span id="num-tomas">3</span> tomas, cada una con su frase. Léela en voz alta, con tu voz normal y el celular a un palmo de la boca.</p>
+        <p class="suave">Cada toma dura hasta 5 segundos. Escúchalas y repite las que no salgan bien.</p>
+      </div>
+      <div id="tomas"></div>
+      <button id="enviar" disabled>Enviar registro</button>
+      <button id="volver" class="secundario">Corregir mis datos</button>
+    </section>
+
+    <!-- Paso 3: resultado -->
+    <section id="paso-fin" class="tarjeta oculto">
+      <h2 id="fin-titulo"></h2>
+      <p id="fin-texto"></p>
+      <table id="fin-tabla"></table>
+      <button id="otro">Registrar a otra persona</button>
+    </section>
+
+    <template id="plantilla-toma">
+      <div class="tarjeta toma">
+        <div class="toma-cabecera">
+          <h2>Toma <span class="n"></span></h2>
+          <span class="estado">Pendiente</span>
+        </div>
+        <div class="frase"></div>
+        <div class="grabando oculto">
+          <div class="medidor"><div></div></div>
+          <div class="tiempo">0.0 s</div>
+        </div>
+        <audio class="oculto" controls preload="auto"></audio>
+        <p class="mensaje"></p>
+        <button class="grabar accion">● Grabar</button>
+      </div>
+    </template>
+  </main>
+  <script type="module" src="/static/js/registro.js"></script>
+</body>
+</html>

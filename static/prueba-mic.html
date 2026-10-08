@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Prueba de micrófono · Aula que Escucha</title>
+  <link rel="stylesheet" href="/static/css/estilo.css">
+</head>
+<body>
+  <main>
+    <h1>Prueba de micrófono</h1>
+    <p class="suave">Deja el celular donde lo pondrías en clase y espera unos 3 minutos. La prueba detecta si el celular "apaga" el sonido de fondo.</p>
+    <p id="error-general" class="error oculto"></p>
+
+    <div class="tarjeta">
+      <label class="casilla"><input type="radio" name="modo" value="sin" checked><span><strong>Sin filtros</strong> (como en el modo clase)</span></label>
+      <label class="casilla"><input type="radio" name="modo" value="con"><span><strong>Con filtros del navegador</strong> (para comparar)</span></label>
+      <button id="empezar">Empezar prueba</button>
+      <div class="botones-fila">
+        <button id="reabrir" class="secundario oculto">Reabrir micrófono</button>
+        <button id="detener" class="grabar oculto">Detener y enviar</button>
+      </div>
+    </div>
+
+    <div id="indicador" class="indicador espera">
+      <div id="indicador-titulo">—</div>
+      <div id="indicador-texto" class="indicador-texto">Toca «Empezar prueba».</div>
+    </div>
+
+    <div class="tarjeta">
+      <div class="fila-dato"><span class="suave">Micrófono abierto hace</span><strong id="dato-tiempo">—</strong></div>
+      <div class="fila-dato"><span class="suave">Nivel ahora</span><strong id="dato-nivel">—</strong></div>
+      <div class="fila-dato"><span class="suave">Ruido de fondo (últimos 5 s)</span><strong id="dato-fondo">—</strong></div>
+      <div class="fila-dato"><span class="suave">Audio en cero exacto (último segundo)</span><strong id="dato-ceros">—</strong></div>
+      <div class="fila-dato"><span class="suave">Filtro detectado por primera vez</span><strong id="dato-primera">—</strong></div>
+      <canvas id="grafico" height="160" style="width:100%;margin-top:12px"></canvas>
+      <p class="suave pequeño">Barras: nivel por segundo (−90 a 0 dBFS). Rojo: ese segundo tuvo más de 30 % del audio en cero exacto (filtro activo).</p>
+      <p class="suave pequeño" id="dato-ajustes"></p>
+    </div>
+  </main>
+  <script type="module" src="/static/js/prueba-mic.js"></script>
+</body>
+</html>

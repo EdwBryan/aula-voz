@@ -1,0 +1,36 @@
+#!/bin/sh
+# hotspot-firewall — abre o cierra en ufw SOLO los puertos del hotspot (Percepción).
+# Se instala como root en /usr/local/bin y 'hotspot' lo llama con sudo sin contraseña
+# (regla en /etc/sudoers.d/hotspot). No acepta otra cosa: no sirve como root genérico.
+# Uso: hotspot-firewall open|close <interfaz> <puerto>
+set -eu
+
+[ "$#" -eq 3 ] || { echo "uso: hotspot-firewall open|close <interfaz> <puerto>" >&2; exit 2; }
+action=$1 iface=$2 port=$3
+
+case "$iface" in ""|*[!A-Za-z0-9_-]*) echo "interfaz inválida: $iface" >&2; exit 2 ;; esac
+[ -d "/sys/class/net/$iface/wireless" ] || { echo "no es una interfaz WiFi: $iface" >&2; exit 2; }
+case "$port" in ""|*[!0-9]*) echo "puerto inválido: $port" >&2; exit 2 ;; esac
+[ "$port" -ge 1 ] && [ "$port" -le 65535 ] || { echo "puerto fuera de rango: $port" >&2; exit 2; }
+
+case "$action" in
+    open|close) ;;
+    *) echo "acción inválida: $action" >&2; exit 2 ;;
+esac
+
+# Al cerrar se intentan las tres aunque alguna falle (p. ej. si ya no existía).
+rule() {
+    if [ "$action" = close ]; then
+        ufw delete "$@" >/dev/null || status=1
+    else
+        ufw "$@" >/dev/null
+    fi
+}
+
+# Mismas reglas que ufw_rules() en 'hotspot'.
+status=0
+subnet=10.42.0.0/24
+rule allow in on "$iface" from "$subnet" to any port "$port" proto tcp comment hotspot
+rule allow in on "$iface" to any port 67 proto udp comment hotspot-dhcp
+rule allow in on "$iface" from "$subnet" to any port 53 comment hotspot-dns
+exit "$status"

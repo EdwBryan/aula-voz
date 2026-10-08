@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Micrófono del aula · Aula que Escucha</title>
+  <link rel="stylesheet" href="/static/css/estilo.css">
+</head>
+<body>
+  <main>
+    <p id="error-general" class="error oculto"></p>
+
+    <!-- Paso 1: nombre del dispositivo -->
+    <section id="paso-nombre">
+      <h1>Micrófono del aula</h1>
+      <div class="tarjeta">
+        <label for="nombre">Nombre de este celular</label>
+        <div id="sugerencias" class="chips"></div>
+        <input id="nombre" type="text" autocomplete="off" autocapitalize="none" maxlength="20" placeholder="mic-1">
+        <p class="suave">Cada celular del aula debe tener un nombre distinto.</p>
+        <button id="unirme" disabled>Unirme a la clase</button>
+      </div>
+    </section>
+
+    <!-- Paso 2: grabando -->
+    <section id="paso-grabar" class="oculto">
+      <div id="indicador" class="indicador espera">
+        <div id="indicador-titulo">Esperando</div>
+        <div id="indicador-texto" class="indicador-texto"></div>
+      </div>
+      <div class="tarjeta">
+        <div class="fila-dato"><span class="suave">Celular</span><strong id="dato-nombre"></strong></div>
+        <div class="fila-dato"><span class="suave">Clase</span><strong id="dato-sesion">—</strong></div>
+        <div class="fila-dato"><span class="suave">Conexión</span><strong id="dato-conexion">—</strong></div>
+        <div class="tiempo grande" id="tiempo">00:00:00</div>
+        <div class="medidor"><div></div></div>
+      </div>
+      <div id="avisos"></div>
+      <button id="cambiar" class="secundario">Cambiar nombre</button>
+    </section>
+  </main>
+  <script type="module" src="/static/js/clase.js"></script>
+</body>
+</html>
