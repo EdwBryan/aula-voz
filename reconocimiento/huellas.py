@@ -132,6 +132,8 @@ def main():
     cal = calibrar(alumnos)
     h = construir(alumnos, cal["umbral"])
     h.guardar()
+    # Huellas nuevas desde cero: las clases se pueden volver a usar con actualizar_huellas.
+    (HUELLAS / "aplicadas.json").unlink(missing_ok=True)
     METRICAS.mkdir(parents=True, exist_ok=True)
     archivo = METRICAS / f"{datetime.now():%Y-%m-%d_%H-%M-%S}_calibracion.json"
     archivo.write_text(json.dumps({"alumnos": len(h.codigos), **cal}, indent=2), encoding="utf-8")
