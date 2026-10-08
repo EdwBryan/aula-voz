@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+import os
 import re
 import shutil
 import uuid
@@ -42,8 +43,18 @@ MAX_BYTES_TOMA = int(audio.DURACION_MAX_S * audio.FS * 2) + 64_000
 
 log = logging.getLogger("aula")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s", datefmt="%H:%M:%S")
+logging.getLogger("speechbrain").setLevel(logging.WARNING)
+if os.environ.get("AULA_TUNEL_PRUEBAS") == "1":
+    log.warning("MODO PRUEBAS: el modo clase también se publica por el túnel.")
 
-clase = EstadoClase(DATOS / "clase")
+try:
+    from .en_vivo import EnVivo
+    en_vivo = EnVivo()
+except ImportError as e:  # sin torch/speechbrain el servidor igual graba
+    log.warning("Reconocimiento en vivo desactivado (%s). Instala requirements.txt.", e)
+    en_vivo = None
+
+clase = EstadoClase(DATOS / "clase", en_vivo)
 
 
 @asynccontextmanager
@@ -61,6 +72,12 @@ app = FastAPI(title="Aula que Escucha", lifespan=ciclo_de_vida)
 CABECERAS_TUNEL = {b"cf-connecting-ip", b"cf-ray", b"x-forwarded-for"}
 RUTAS_TUNEL = {"/registro", "/api/registro/config", "/ws/registro", "/favicon.ico"}
 PREFIJOS_TUNEL = ("/static/css/", "/static/js/captura.js", "/static/js/registro.js", "/static/js/pcm-worklet.js")
+# Solo para pruebas (./tunel.sh --pruebas): también el modo clase y la prueba de micrófono,
+# para mandar audio con los datos móviles mientras la laptop sigue con internet.
+# El panel /control nunca se publica.
+if os.environ.get("AULA_TUNEL_PRUEBAS") == "1":
+    RUTAS_TUNEL |= {"/clase", "/ws/clase", "/prueba-mic", "/api/prueba-mic"}
+    PREFIJOS_TUNEL += ("/static/js/clase.js", "/static/js/prueba-mic.js")
 
 
 def por_tunel(scope) -> bool:

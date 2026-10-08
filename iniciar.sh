@@ -3,16 +3,24 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-if [ ! -x .venv/bin/python ]; then
-    echo "Creando entorno de Python (necesita internet solo esta vez)..."
+if ! .venv/bin/python -c "import fastapi, speechbrain, silero_vad" 2>/dev/null; then
+    echo "Instalando el entorno de Python (necesita internet solo esta vez; torch pesa ~200 MB)..."
     if command -v uv >/dev/null; then
-        uv venv -q .venv && uv pip install -q -p .venv -r requirements.txt
+        [ -x .venv/bin/python ] || uv venv -q -p 3.12 .venv
+        uv pip install -q -p .venv -r requirements.txt --index-strategy unsafe-best-match
     else
-        python -m venv .venv && .venv/bin/pip install -q -r requirements.txt
+        [ -x .venv/bin/python ] || python3 -m venv .venv
+        .venv/bin/pip install -q -r requirements.txt
     fi
 fi
 
 [ -f certs/certificado.pem ] || ./scripts/generar_certificado.sh
+
+# Modelos de voz (ECAPA, unos 90 MB): se descargan una sola vez, antes de prender el hotspot.
+if [ ! -f modelos/ecapa/hyperparams.yaml ]; then
+    echo "Descargando modelos de voz (necesita internet solo esta vez)..."
+    .venv/bin/python -m reconocimiento.modelos
+fi
 
 # Avisa si una IP actual no está en el certificado (p. ej. cambió la IP de casa).
 san=$(openssl x509 -in certs/certificado.pem -noout -ext subjectAltName)
