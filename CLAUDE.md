@@ -30,6 +30,9 @@ El sistema escucha la clase y produce tres cosas:
 - Todo corre en mi laptop (Arch Linux), sin internet durante la clase.
   Nada de servicios en la nube.
 - Audio estándar del proyecto: 16 kHz, mono, PCM 16 bits.
+- Aula grande con 4 celulares, cada uno cubre unos 5 x 5 m: un alumno puede
+  quedar a ~3.5 m del micrófono más cercano, y una misma voz puede oírse en
+  varios celulares a la vez.
 - Privacidad: las voces son datos personales (Ley 29733). Hay consentimiento
   en el registro, los datos quedan locales y no se suben a ningún lado.
 
@@ -52,11 +55,17 @@ El sistema escucha la clase y produce tres cosas:
    inicio de clase (cuando el docente pasa lista). Por ahora, sin transcripción,
    toda la sesión cuenta como ventana de asistencia; más adelante la
    transcripción detectará cuándo el docente pasa lista.
+   Cómo se pasa lista: el docente dice el nombre en voz alta y el alumno
+   responde "presente". Las primeras semanas es poco probable que hagan
+   trampa, así que esos "presente" sirven para afinar las huellas con voz del
+   aula. Después, el sistema puede detectar suplantación: la misma voz que ya
+   respondió antes en la lista responde por otro nombre.
 5. Participación: agregación de segmentos por alumno (intervenciones,
    tiempo total, momentos).
 6. Transcripción: faster-whisper en español, después de la clase (no en vivo).
    Se alinea con los segmentos de hablante para saber quién dijo qué.
-7. Salida y panel del docente.
+7. Salida y panel del docente. (Pendiente para después: todo lo del docente,
+   como registrar su voz o que confirme voces desde el panel.)
 
 ## Contrato de salida (para el grupo de predicción)
 Por cada clase, un CSV o JSON con una fila por intervención:
