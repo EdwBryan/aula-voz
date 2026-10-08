@@ -70,7 +70,7 @@ def main():
     for s in seguros:
         if s["mic"] not in wavs:
             wavs[s["mic"]] = audio.leer(carpeta / meta["dispositivos"][s["mic"]]["archivo"])
-        nuevos.setdefault(s["codigo"], []).append(embedding(audio.recorte(wavs[s["mic"]], s["inicio_s"], s["fin_s"])))
+        nuevos.setdefault(a.confirmar or s["codigo"], []).append(embedding(audio.recorte(wavs[s["mic"]], s["inicio_s"], s["fin_s"])))
 
     historial = HUELLAS / "historial" / f"{datetime.now():%Y-%m-%d_%H-%M-%S}_antes_de_{carpeta.name}"
     historial.mkdir(parents=True)
