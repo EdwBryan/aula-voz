@@ -159,3 +159,4 @@ body.ancho main { max-width: 1000px; }
 .disp.apagado { opacity: 0.55; }
 .punto-rec { display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: var(--grabar); margin-right: 8px; animation: latido 1s infinite; }
 .tarjeta table { display: block; overflow-x: auto; }
+h3 { font-size: 1rem; margin: 18px 0 4px; }

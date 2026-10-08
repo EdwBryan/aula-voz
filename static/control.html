@@ -63,6 +63,25 @@
       </table>
     </section>
 
+    <!-- Reconocimiento de voz en vivo -->
+    <section id="voz" class="tarjeta oculto">
+      <div class="cabecera-panel">
+        <h2>Asistencia por voz</h2>
+        <span id="voz-presentes" class="insignia"></span>
+      </div>
+      <p id="voz-mensaje" class="suave"></p>
+      <table>
+        <thead><tr><th>Alumno</th><th>Estado</th><th>Desde</th><th>Veces</th><th title="Similitud más alta con su huella de voz">Similitud</th></tr></thead>
+        <tbody id="voz-alumnos"></tbody>
+      </table>
+      <h3>Últimas voces</h3>
+      <table>
+        <thead><tr><th>Hora</th><th>Celular</th><th>Minuto</th><th>Quién</th><th>Similitud</th><th title="Tiempo que tardó en identificar desde que llegó el audio">Demora</th></tr></thead>
+        <tbody id="voz-ultimos"></tbody>
+      </table>
+      <p id="voz-latencia" class="suave pequeño"></p>
+    </section>
+
     <h2>Celulares</h2>
     <div id="dispositivos" class="rejilla"></div>
     <p id="sin-dispositivos" class="suave">Ningún celular conectado. Ábreles <strong id="url-clase"></strong></p>

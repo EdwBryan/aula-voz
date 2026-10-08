@@ -81,6 +81,8 @@ function pintar() {
     $('#marcas').classList.add('oculto');
   }
 
+  pintarVoz(estado?.voz, s);
+
   const disp = estado?.dispositivos ?? [];
   $('#sin-dispositivos').classList.toggle('oculto', disp.length > 0);
   $('#dispositivos').innerHTML = disp.map((d) => {
@@ -104,6 +106,38 @@ function pintar() {
       ${avisos.length ? `<div class="mal pequeño">${avisos.map(esc).join(' · ')}</div>` : ''}
     </div>`;
   }).join('');
+}
+
+function mmss(seg) {
+  if (seg == null) return '—';
+  const p = (n) => String(n).padStart(2, '0');
+  return `${p(Math.floor(seg / 60))}:${p(Math.floor(seg) % 60)}`;
+}
+
+function pintarVoz(v, s) {
+  $('#voz').classList.toggle('oculto', !v);
+  if (!v) return;
+  const presentes = v.alumnos.filter((a) => a.presente).length;
+  $('#voz-presentes').textContent = `${presentes} / ${v.alumnos.length} presentes`;
+  $('#voz-presentes').className = `insignia ${presentes ? 'terminada' : ''}`;
+  $('#voz-mensaje').textContent = v.mensaje;
+  $('#voz-mensaje').className = v.estado === 'listo' ? 'suave' : 'mal';
+  $('#voz-alumnos').innerHTML = v.alumnos.map((a) => `<tr>
+      <td><strong>${esc(a.nombre)}</strong> <span class="suave">${esc(a.codigo)}</span></td>
+      <td class="${a.presente ? 'ok' : 'suave'}">${a.presente ? '✓ Presente' : (s && s.estado !== 'preparada' ? 'Sin oír aún' : '—')}</td>
+      <td>${a.presente ? `${esc(a.hora)} <span class="suave">(min ${mmss(a.primera_vez_s)})</span>` : ''}</td>
+      <td>${a.presente ? a.veces : ''}</td>
+      <td>${a.presente ? a.mejor_similitud.toFixed(2) : ''}</td>
+    </tr>`).join('');
+  $('#voz-ultimos').innerHTML = v.ultimos.length ? v.ultimos.map((u) => `<tr>
+      <td>${esc(u.hora)}</td><td>${esc(u.mic)}</td><td>${mmss(u.inicio_clase_s)}</td>
+      <td class="${u.nombre === 'desconocido' ? 'suave' : 'ok'}">${esc(u.nombre)}</td>
+      <td>${u.similitud.toFixed(2)}</td><td>${u.latencia_s.toFixed(1)} s</td>
+    </tr>`).join('') : '<tr><td colspan="6" class="suave">Todavía no se ha oído ninguna voz.</td></tr>';
+  $('#voz-latencia').textContent = v.segmentos
+    ? `${v.segmentos} segmentos de voz · demora media ${v.latencia_media_s} s, máxima ${v.latencia_max_s} s`
+      + (v.en_cola > 20 ? ` · ⚠ ${v.en_cola} trozos esperando` : '')
+    : '';
 }
 
 function conectar() {
