@@ -235,10 +235,13 @@ class Sesion:
         self.eventos: list[dict] = []
         self.marcas: list[dict] = []
         self.grabaciones: dict[str, Grabacion] = {}
+        self.inicio_ms: float | None = None
 
     def evento(self, tipo: str):
         t = ahora_ms()
         self.eventos.append({"tipo": tipo, "hora": iso(t), "t_ms": round(t, 1)})
+        if tipo == "inicio":
+            self.inicio_ms = round(t, 1)
 
     def crear_carpeta(self):
         fecha = datetime.fromtimestamp(ahora_ms() / 1000).strftime("%Y-%m-%d_%H-%M")
@@ -297,8 +300,9 @@ class Sesion:
 
 
 class EstadoClase:
-    def __init__(self, raiz: Path):
+    def __init__(self, raiz: Path, en_vivo=None):
         self.raiz = raiz
+        self.en_vivo = en_vivo  # reconocimiento en vivo (server/en_vivo.py); None si no está instalado
         self.sesion: Sesion | None = None
         self.dispositivos: dict[str, Dispositivo] = {}
         self.paneles: set[WebSocket] = set()
@@ -412,6 +416,8 @@ class EstadoClase:
         pos = t.pos + muestra
         g.escritor.escribir(pos, pcm)
         g.cobertura.agregar(pos, pos + n)
+        if self.en_vivo is not None and s.inicio_ms is not None:
+            self.en_vivo.alimentar(disp.nombre, (g.inicio_ms - s.inicio_ms) / 1000, pos, pcm)
         g.ultimo_audio_ms = ahora_ms()
         t.recibido_hasta = max(t.recibido_hasta, muestra + n)
 
@@ -471,6 +477,8 @@ class EstadoClase:
             raise ValueError("No hay celulares conectados.")
         s.estado = "grabando"
         s.evento("reanudar" if reanudar else "inicio")
+        if not reanudar and self.en_vivo is not None:
+            self.en_vivo.nueva_sesion(s.inicio_ms)
         log.info("%s grabación", "Reanuda" if reanudar else "Inicia")
         for d in self.dispositivos.values():
             motivo = "reanudar" if reanudar and d.nombre in s.grabaciones else "inicio"
@@ -535,6 +543,9 @@ class EstadoClase:
         s.estado = "terminada"
         s.guardar_metadata()
         await self.a_celulares({"tipo": "sesion", "sesion": self.info_sesion()})
+        if self.en_vivo is not None:
+            clase = {"clase_id": s.carpeta.name if s.carpeta else "", "curso": s.curso, "tema": s.tema}
+            await asyncio.to_thread(self.en_vivo.terminar, s.carpeta, clase)
 
         log.info("Clase guardada en %s", s.carpeta)
         for n, g in s.grabaciones.items():
@@ -587,7 +598,8 @@ class EstadoClase:
                     for n, g in s.grabaciones.items() if g.verificacion
                 ] if s.estado == "terminada" else None,
             }
-        return {"tipo": "estado", "sesion": sesion, "dispositivos": disp}
+        voz = self.en_vivo.resumen() if self.en_vivo is not None else None
+        return {"tipo": "estado", "sesion": sesion, "dispositivos": disp, "voz": voz}
 
     # ---------- tareas de fondo ----------
 
