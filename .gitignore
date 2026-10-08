@@ -1,0 +1,12 @@
+# Datos personales (voces, Ley 29733): nunca se suben
+data/
+Audios y cosas S4/
+enviado.pkl
+
+# Se generan en el primer ./iniciar.sh
+certs/
+modelos/
+.venv/
+
+__pycache__/
+*.pyc
