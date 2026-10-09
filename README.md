@@ -15,9 +15,9 @@ durante la clase y sin servicios en la nube.
 | 2. Detección de voz | Silero VAD | ✅ |
 | 3. Identificación de hablante | SpeechBrain ECAPA + huellas de voz | ✅ |
 | 4. Asistencia | Reconocimiento en vivo y por lotes | ✅ |
-| 5. Participación | Intervenciones y tiempo de voz por alumno | 🟡 básico (en la asistencia) |
+| 5. Participación | Varios celulares juntos, voces agrupadas por persona, intervenciones y tiempo | 🟡 sin texto |
 | 6. Transcripción | faster-whisper (después de la clase) | ⏳ pendiente |
-| 7. Panel del docente y salida para el grupo de predicción | | 🟡 panel de asistencia |
+| 7. Panel del docente y salida para el grupo de predicción | Panel en vivo, `reporte.html`, `intervenciones.csv` | 🟡 falta el texto |
 
 Audio estándar del proyecto: **WAV, 16 kHz, mono, PCM 16 bits**.
 
@@ -108,16 +108,29 @@ Cada etapa se ejecuta sola sobre los audios guardados, así que se puede repetir
 procesamiento sin volver a grabar (sin argumento usa la clase más reciente):
 
 ```bash
-.venv/bin/python -m reconocimiento.vad          data/clase/<carpeta>   # → segmentos.json
-.venv/bin/python -m reconocimiento.identificar  data/clase/<carpeta>   # → identificacion.json
-.venv/bin/python -m reconocimiento.asistencia   data/clase/<carpeta>   # → asistencia.json/.csv
-.venv/bin/python -m reconocimiento.procesar     data/clase/<carpeta>   # las tres seguidas
+.venv/bin/python -m reconocimiento.procesar     data/clase/<carpeta>   # todas seguidas
 
-.venv/bin/python -m reconocimiento.actualizar_huellas data/clase/<carpeta>
+.venv/bin/python -m reconocimiento.vad          data/clase/<carpeta>   # → segmentos.json
+.venv/bin/python -m reconocimiento.identificar  data/clase/<carpeta>   # → identificacion.json, embeddings.npz
+.venv/bin/python -m reconocimiento.fusion       data/clase/<carpeta>   # → intervenciones.json/.csv
+.venv/bin/python -m reconocimiento.hablantes    data/clase/<carpeta>   # → hablantes.json
+.venv/bin/python -m reconocimiento.asistencia   data/clase/<carpeta>   # → asistencia.json/.csv
+.venv/bin/python -m reconocimiento.reporte      data/clase/<carpeta>   # → reporte.html
+
+.venv/bin/python -m reconocimiento.actualizar_huellas data/clase/<carpeta> [--confirmar CODIGO]
 ```
 
+- **fusion**: una misma voz llega a varios celulares; los segmentos que se solapan en el tiempo
+  forman una sola intervención y se usa el celular que mejor la oyó.
+- **hablantes**: agrupa las intervenciones por parecido de voz, también las de personas sin
+  registrar (p. ej. el docente), y avisa si una misma voz se reconoció como dos alumnos
+  distintos (posible «presente» por otro).
+- **reporte**: `reporte.html` para el docente, se abre en el navegador sin internet.
+
 `actualizar_huellas` añade a cada huella los segmentos muy seguros de esa clase, para que el
-sistema aprenda cómo suena cada alumno de lejos. Cada clase se aplica una vez y la huella
+sistema aprenda cómo suena cada alumno de lejos. Con `--confirmar CODIGO` (el alumno confirmó
+que esas voces eran suyas) entran también sus segmentos de similitud ≥ 0.20 que no pasaban el
+umbral. Cada clase se aplica una vez y la huella
 anterior queda en `data/huellas/historial/`.
 
 ---
@@ -137,13 +150,14 @@ anterior queda en `data/huellas/historial/`.
 | `mejor_similitud` | similitud coseno más alta con su huella |
 | `microfonos` | celulares que lo oyeron |
 
+**`intervenciones.csv`** (contrato del grupo de predicción, una fila por intervención):
+`clase_id, curso, tema, inicio_s, fin_s, hablante, texto`. `texto` queda vacío hasta tener la
+transcripción.
+
 **`identificacion.json`**: una entrada por segmento de voz con `mic`, `inicio_s`/`fin_s`
 (dentro del WAV), `inicio_clase_s`/`fin_clase_s` (desde el inicio de la clase), `codigo`
 (`null` = desconocido), `similitud`, `candidato` (el más parecido) y `segundo` (similitud del
 segundo más parecido).
-
-Pendiente para el grupo de predicción (cuando esté la transcripción): un archivo por clase con
-una fila por intervención: `clase_id, curso, tema, inicio_s, fin_s, hablante, texto`.
 
 ---
 
@@ -190,6 +204,22 @@ de la red local.
 
 ---
 
+## WiFi de la universidad
+
+Si los celulares y la laptop están en el mismo WiFi, entran directo a
+`https://<IP de la laptop>:8000/clase` (la muestra `./iniciar.sh`). Hace falta:
+
+1. que la IP esté en el certificado: `./scripts/generar_certificado.sh`;
+2. abrir el puerto en el firewall solo para esa red, y cerrarlo al terminar:
+
+```bash
+sudo ufw allow in on wlp0s20f3 from 172.30.0.0/19 to any port 8000 proto tcp comment aula-prueba
+sudo ufw delete allow in on wlp0s20f3 from 172.30.0.0/19 to any port 8000 proto tcp
+```
+
+Algunas redes bloquean Cloudflare (el túnel no abre) o no dejan que los equipos se vean entre
+sí; en ese caso, el hotspot.
+
 ## Hotspot de la laptop
 
 `hotspot-programa/` crea una red WiFi propia (SSID *AulaQueEscucha*) para que los celulares
@@ -222,7 +252,8 @@ reconocimiento/  pipeline por etapas (cada una: python -m reconocimiento.<etapa>
   config.py        parámetros y su origen
   modelos.py       Silero VAD y ECAPA
   audio.py         lectura y segmentación
-  huellas.py, vad.py, identificar.py, asistencia.py, actualizar_huellas.py, evaluar.py
+  huellas.py, vad.py, identificar.py, fusion.py, hablantes.py, asistencia.py,
+  reporte.py, actualizar_huellas.py, evaluar.py
 static/          páginas del celular y del panel
 hotspot-programa/ hotspot de la laptop
 scripts/         generar_certificado.sh
