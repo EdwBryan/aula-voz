@@ -36,7 +36,7 @@ def fusionar(segmentos: list[dict]) -> list[dict]:
             "inicio_s": round(min(x["inicio_clase_s"] for x in g), 3),
             "fin_s": round(max(x["fin_clase_s"] for x in g), 3),
             "codigo": mejor["codigo"], "hablante": mejor["nombre"], "similitud": mejor["similitud"],
-            "mic": mejor["mic"], "mics": sorted({x["mic"] for x in g}),
+            "mic": mejor["mic"], "mics": sorted({x["mic"] for x in g}), "indice": mejor.get("i"),
             "por_mic": {x["mic"]: [x["nombre"], x["similitud"]] for x in g},
         })
     return salida
