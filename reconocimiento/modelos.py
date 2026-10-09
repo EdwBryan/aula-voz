@@ -46,6 +46,8 @@ def descargar():
     """Deja todo listo para trabajar sin internet."""
     nuevo_vad()
     ecapa()
+    from faster_whisper import WhisperModel
+    WhisperModel("small", device="cpu", compute_type="int8", download_root=str(MODELOS / "whisper"))
     print(f"Modelos listos en {MODELOS}")
 
 

@@ -3,7 +3,7 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-if ! .venv/bin/python -c "import fastapi, speechbrain, silero_vad" 2>/dev/null; then
+if ! .venv/bin/python -c "import fastapi, speechbrain, silero_vad, faster_whisper" 2>/dev/null; then
     echo "Instalando el entorno de Python (necesita internet solo esta vez; torch pesa ~200 MB)..."
     if command -v uv >/dev/null; then
         [ -x .venv/bin/python ] || uv venv -q -p 3.12 .venv
@@ -16,8 +16,8 @@ fi
 
 [ -f certs/certificado.pem ] || ./scripts/generar_certificado.sh
 
-# Modelos de voz (ECAPA, unos 90 MB): se descargan una sola vez, antes de prender el hotspot.
-if [ ! -f modelos/ecapa/hyperparams.yaml ]; then
+# Modelos (ECAPA ~90 MB y Whisper small ~460 MB): se descargan una sola vez, antes de prender el hotspot.
+if [ ! -f modelos/ecapa/hyperparams.yaml ] || [ ! -d modelos/whisper ]; then
     echo "Descargando modelos de voz (necesita internet solo esta vez)..."
     .venv/bin/python -m reconocimiento.modelos
 fi
