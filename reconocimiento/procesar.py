@@ -5,11 +5,11 @@
 
 import sys
 
-from . import asistencia, fusion, hablantes, identificar, vad
+from . import asistencia, fusion, hablantes, identificar, reporte, vad
 
 
 def main():
-    for etapa in (vad, identificar, fusion, hablantes, asistencia):
+    for etapa in (vad, identificar, fusion, hablantes, asistencia, reporte):
         print(f"[{etapa.__name__.split('.')[-1]}]")
         etapa.main()
 
