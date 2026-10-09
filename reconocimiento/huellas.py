@@ -1,6 +1,10 @@
 """Etapa: huellas de voz a partir del registro.
 
-    python -m reconocimiento.huellas            # data/registro/ → data/huellas/
+    python -m reconocimiento.huellas               # agrega a los recién registrados
+    python -m reconocimiento.huellas --desde-cero  # rehace todas desde el registro
+
+Por defecto las huellas que ya existen se conservan (con lo que aprendieron en clase o en la
+lista) y solo se agregan los alumnos nuevos del registro. --desde-cero vuelve al registro puro.
 
 Huella = promedio (normalizado) de los embeddings ECAPA de las tomas del alumno, usando
 solo la parte con voz de cada toma. El umbral de "desconocido" se calibra con el mismo
@@ -127,13 +131,30 @@ def construir(alumnos: dict[str, dict], umbral: float) -> Huellas:
 
 
 def main():
+    import sys
+    desde_cero = "--desde-cero" in sys.argv
     print(f"Leyendo el registro de {REGISTRO}")
     alumnos = leer_registro()
     cal = calibrar(alumnos)
-    h = construir(alumnos, cal["umbral"])
+    nuevas = construir(alumnos, cal["umbral"])
+    if desde_cero or not (HUELLAS / "alumnos.json").exists():
+        h = nuevas
+        # Huellas nuevas desde cero: las clases se pueden volver a usar con actualizar_huellas.
+        (HUELLAS / "aplicadas.json").unlink(missing_ok=True)
+    else:
+        h = Huellas.cargar()
+        h.umbral = nuevas.umbral
+        agregados = 0
+        for i, c in enumerate(nuevas.codigos):
+            if c not in h.codigos:
+                h.codigos.append(c)
+                h.nombres.append(nuevas.nombres[i])
+                h.matriz = np.vstack([h.matriz, nuevas.matriz[i]])
+                h.cuenta = np.append(h.cuenta, nuevas.cuenta[i])
+                agregados += 1
+        print(f"Se conservan {len(h.codigos) - agregados} huellas existentes y se agregan {agregados} nuevas "
+              "(--desde-cero para rehacerlas todas).")
     h.guardar()
-    # Huellas nuevas desde cero: las clases se pueden volver a usar con actualizar_huellas.
-    (HUELLAS / "aplicadas.json").unlink(missing_ok=True)
     METRICAS.mkdir(parents=True, exist_ok=True)
     archivo = METRICAS / f"{datetime.now():%Y-%m-%d_%H-%M-%S}_calibracion.json"
     archivo.write_text(json.dumps({"alumnos": len(h.codigos), **cal}, indent=2), encoding="utf-8")
